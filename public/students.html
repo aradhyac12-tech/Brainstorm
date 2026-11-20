@@ -1,0 +1,44 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My progress · Brainstorm</title><meta name="theme-color" content="#5b5bf0"><meta name="robots" content="noindex"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"><link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧠</text></svg>"></head>
+<body><div class="wrap">
+<div class="row" style="margin-bottom:12px"><a class="btn g sm" href="/">← Home</a></div>
+<div class="card"><div class="row"><h1 class="grow" style="margin:0">🎓 Student dashboard</h1><button id="rf" class="g sm" type="button">Refresh</button></div>
+<div class="row" style="margin-top:12px"><select id="qs" class="grow" aria-label="Quiz"></select><select id="gs" class="grow" aria-label="Group"></select></div></div>
+<div id="out"></div></div>
+<script>
+const $=s=>document.querySelector(s);
+function h(t,a,...c){const e=document.createElement(t);for(const k in a||{}){if(k==='style')e.style.cssText=a[k];else e.setAttribute(k,a[k])}
+  c.flat().forEach(x=>e.append(x instanceof Node?x:document.createTextNode(x)));return e}
+const pc=(a,b)=>b?Math.round(a/b*100):0;
+let me={};try{me=JSON.parse(localStorage.getItem('stu')||'{}')}catch{}
+const mine=x=>me.name&&me.group&&x.name.toLowerCase()===me.name.toLowerCase()&&x.group.toLowerCase()===me.group.toLowerCase();
+let QL=[],DQ='',DF='';
+const out=$('#out');
+async function get(u){const r=await fetch(u),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Could not load ('+r.status+')');return j}
+async function init(){
+  try{QL=await get('/api/students/quizzes')}catch(e){out.replaceChildren(h('div',{class:'card warn'},'⚠ '+e.message));return}
+  if(!QL.length){out.replaceChildren(h('div',{class:'card m'},'No quizzes yet.'));return}
+  DQ=location.hash.slice(1);if(!QL.some(x=>x.id===DQ))DQ=QL[0].id;
+  $('#qs').replaceChildren(...QL.map(x=>h('option',{value:x.id},x.title)));$('#qs').value=DQ;load();
+}
+async function load(){
+  out.replaceChildren(h('div',{class:'card m'},'Loading…'));let R;
+  try{R=await get('/api/students/'+DQ)}catch(e){out.replaceChildren(h('div',{class:'card warn'},'⚠ '+e.message));return}
+  const groups=[...new Set(R.students.map(x=>x.group))].sort();if(DF&&!groups.includes(DF))DF='';
+  $('#gs').replaceChildren(h('option',{value:''},'All groups'),...groups.map(g=>h('option',{value:g},g)));$('#gs').value=DF;$('#gs').hidden=groups.length<2;
+  const rows=R.students.filter(x=>!DF||x.group===DF),total=R.total||1,T=rows.reduce((t,x)=>({att:t.att+x.att,ok:t.ok+x.ok}),{att:0,ok:0});
+  const stat=(v,l)=>h('div',{class:'card',style:'margin:0'},h('b',{style:'font-size:1.5rem;display:block'},String(v)),l);
+  const tr=rows.map(x=>{const prog=Math.min(100,pc(x.cover,total)),acc=pc(x.ok,x.att);
+    return h('tr',{style:mine(x)?'background:color-mix(in srgb,var(--p) 10%,transparent)':''},h('td',{},h('b',{},x.name),mine(x)?h('span',{class:'tag',style:'margin-left:6px'},'You'):''),h('td',{},x.group),h('td',{},String(x.att)),
+      h('td',{style:'color:var(--ok);font-weight:700'},String(x.ok)),h('td',{style:'color:#e5484d;font-weight:700'},String(x.att-x.ok)),h('td',{},x.att?acc+'%':'–'),
+      h('td',{style:'min-width:120px'},h('div',{class:'bar',style:'margin:4px 0'},h('i',{style:'width:'+prog+'%'})),h('span',{class:'m'},x.cover+' / '+total+' ('+prog+'%)')),
+      h('td',{},h('span',{class:'tag'+(x.done?' ok':'')},x.done?'Completed':x.att?'In progress':'Started')))});
+  out.replaceChildren(
+    h('div',{style:'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:12px 0'},
+      stat(rows.length,'Students'),stat(T.att,'Attempted'),stat(T.ok,'Correct'),stat(T.att-T.ok,'Wrong'),stat(T.att?pc(T.ok,T.att)+'%':'–','Accuracy')),
+    h('div',{class:'card'},rows.length?h('div',{style:'overflow-x:auto'},h('table',{},h('tr',{},['Student','Group','Attempted','Correct','Wrong','Accuracy','Progress','Status'].map(x=>h('th',{},x))),tr)):h('p',{class:'m',style:'margin:0'},'No students yet.'),
+      rows.length?h('p',{class:'m',style:'margin:10px 0 0'},'A student appears once they finish a round. Counts include retries of missed questions.'):''));
+}
+$('#qs').onchange=e=>{DQ=e.target.value;DF='';history.replaceState(null,'','#'+DQ);load()};
+$('#gs').onchange=e=>{DF=e.target.value;load()};$('#rf').onclick=load;init();
+</script></body></html>

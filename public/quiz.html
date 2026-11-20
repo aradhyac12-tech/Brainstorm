@@ -1,0 +1,232 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Brainstorm</title><meta name="theme-color" content="#5b5bf0"><meta name="robots" content="noindex,nofollow"><meta name="description" content="Take this quiz on Brainstorm."><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"><link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧠</text></svg>"></head>
+<body><div class="wrap" id="app">Loading…</div>
+<script>
+const app=document.getElementById('app'),id=location.pathname.split('/').filter(Boolean).pop().replace(/[^a-z0-9]/gi,'');
+const h=(t,a={},...c)=>{const e=document.createElement(t);for(const[k,v]of Object.entries(a))k.startsWith('on')?e[k]=v:k==='class'?e.className=v:e[k]=v;c.flat().forEach(x=>e.append(x));return e};
+const shuf=a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
+const L=i=>String.fromCharCode(65+i);
+let Q,qs,sh,order,pos,wrong,round,first,ok,att,student,hist,answered,panelOpen=false,closeSheet=null;
+let picks={},fixed=new Set(),skipped=new Set(),mode='all',tm=null,deadline=0,timeUp=false,testRound=false;
+const N=25,MINS=25;
+// ---------- resume after refresh (progress kept in localStorage) ----------
+const SK='qz:'+id;let fin=null;
+function save(){try{localStorage.setItem(SK,JSON.stringify({v:1,n:qs.length,t:Date.now(),att,student,round,first,hist,order,pos,wrong,ok,picks,fixed:[...fixed],skipped:[...skipped],sh,tm:!!tm,testRound,timeUp,deadline,answered,fin}))}catch{}}
+function clearSave(){try{localStorage.removeItem(SK)}catch{}}
+function loadSave(){try{const x=JSON.parse(localStorage.getItem(SK));
+  if(x&&x.v===1&&x.n===qs.length&&Date.now()-x.t<6048e5&&x.student&&Array.isArray(x.order)&&x.order.every(i=>qs[i])&&Array.isArray(x.wrong)&&x.wrong.every(i=>qs[i]))return x}catch{}
+  clearSave();return null}
+function restore(x){
+  att=x.att;student=x.student;round=x.round;first=x.first;hist=x.hist||[];order=x.order;wrong=x.wrong;ok=x.ok;picks=x.picks||{};
+  fixed=new Set(x.fixed);skipped=new Set(x.skipped);sh=!!x.sh;testRound=!!x.testRound;timeUp=!!x.timeUp;answered=false;fin=null;
+  if(x.fin)return done(x.fin);                       // was on the results screen
+  pos=x.pos+(x.answered?1:0);                        // an answered question is already counted - move on
+  if(x.tm){deadline=x.deadline;tm=setInterval(tick,250);if(deadline<=Date.now())return timeout()}
+  show();
+}
+function resumeCard(x){
+  const nq=x.order.length,cur=Math.min(x.pos+(x.answered?2:1),nq);
+  let left=0;if(x.tm)left=Math.max(0,Math.round((x.deadline-Date.now())/1000));
+  const info=x.fin?'You finished a round. Pick up your results and wrong answers.'
+    :'Question '+cur+' of '+nq+' · '+x.ok+' correct so far'+(x.tm?(left?' · ⏱ '+fmt(left)+' left':' · ⏰ time ran out'):'');
+  app.replaceChildren(h('div',{class:'card introc'},h('div',{class:'qlabel'},'Welcome back'),h('h1',{},Q.title),
+    h('p',{},x.student.name+' · '+x.student.group),h('p',{class:'m'},info),
+    h('div',{class:'row',style:'margin-top:14px'},
+      h('button',{class:'next',onclick:()=>restore(x)},x.fin?'View results →':'Resume quiz →'),
+      h('button',{class:'g',onclick:()=>{clearSave();intro()}},'Start over'))));
+}
+// ---------- sound (soft, optional) ----------
+let snd=true,actx=null;try{snd=localStorage.getItem('snd')!=='0'}catch{}
+function note(f,t,d,type='sine'){const o=actx.createOscillator(),g=actx.createGain();o.type=type;o.frequency.value=f;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.055,t+.015);g.gain.exponentialRampToValueAtTime(.0001,t+d);o.connect(g);g.connect(actx.destination);o.start(t);o.stop(t+d+.03)}
+function beep(kind){
+  if(!snd)return;
+  try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();if(actx.state==='suspended')actx.resume();
+    const n=actx.currentTime;
+    if(kind==='ok'){note(660,n,.12);note(880,n+.09,.18)}          // soft rising chime
+    else{note(240,n,.16,'triangle');note(190,n+.11,.2,'triangle')} // soft low thud
+  }catch{}
+}
+function setSnd(v){snd=v;try{localStorage.setItem('snd',v?'1':'0')}catch{}
+  document.querySelectorAll('.sndb').forEach(b=>{b.textContent=v?'🔊':'🔇';b.classList.toggle('off',!v);b.setAttribute('aria-pressed',v)});
+  document.querySelectorAll('.sndchk').forEach(c=>c.checked=v);if(v)beep('ok')}
+const sndBtn=()=>h('button',{type:'button',class:'sndb'+(snd?'':' off'),title:'Sound on/off','aria-label':'Sound on/off','aria-pressed':snd,onclick:()=>setSnd(!snd)},snd?'🔊':'🔇');
+const fmt=s=>{s=Math.max(0,s);return String(s/60|0).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};   // picks[qi] = wrong option indices tried; fixed = questions corrected
+
+fetch('/api/quiz/'+id).then(r=>{if(r.status===410)throw 'exp';if(r.status===404)throw 'nf';return r.ok?r.json():r.json().then(j=>Promise.reject('srv:'+(j.error||r.status)),()=>Promise.reject('srv:'+r.status))}).then(q=>{Q=q;qs=q.questions.map((x,i)=>({...x,i})).filter(x=>x.answer>=0);sh=!!q.shuffle;const sv=loadSave();sv?resumeCard(sv):intro()}).catch(e=>app.replaceChildren(h('div',{class:'card'},h('h1',{},e==='exp'?'⏰ This quiz link has expired':(typeof e==='string'&&e.startsWith('srv:')?'Server problem':'Quiz not found')),h('p',{class:'m'},e==='exp'?'Please contact your instructor for a new link.':(typeof e==='string'&&e.startsWith('srv:')?'The quiz could not be loaded ('+e.slice(4)+'). Tell your instructor.':'Check the link and try again.')))));
+
+function intro(){
+  document.onkeydown=null;sh=!!Q.shuffle;   // shuffle is off unless the admin turned it on
+  if(!qs.length)return app.replaceChildren(h('div',{class:'card'},h('h1',{},Q.title),h('p',{},'⚠️ This quiz has no ready questions yet.'),h('p',{class:'m'},'The admin must open this quiz in Admin → Edit, select the correct answer for each question, and press Save.')));
+  let sv={};try{sv=JSON.parse(localStorage.getItem('stu')||'{}')}catch{}
+  const n=h('input',{type:'text',placeholder:'Your full name',value:sv.name||'',autocomplete:'name'}),g=h('input',{type:'text',placeholder:'Group / class / batch',value:sv.group||''}),err=h('p',{class:'warn'});
+  mode='all';
+  const go=h('button',{class:'next',onclick:async()=>{
+    const name=n.value.trim(),group=g.value.trim();
+    if(!name||!group){err.textContent='Please enter your name and group.';return}
+    try{localStorage.setItem('stu',JSON.stringify({name,group}))}catch{}
+    go.disabled=true;att=null;
+    try{const r=await fetch('/api/quiz/'+id+'/attempt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,group})});att=(await r.json()).id}catch{}
+    student={name,group};hist=[];round=1;first=null;picks={};fixed=new Set();
+    testRound=false;run(qs.map((_,i)=>i));   // all questions, no time limit
+  }},'Start test →');
+  const dashBtn=h('button',{type:'button',class:'g',onclick:()=>{const name=n.value.trim(),group=g.value.trim();if(name&&group){try{localStorage.setItem('stu',JSON.stringify({name,group}))}catch{}}location.href='/students.html'}},'🎓 Student dashboard');
+  app.replaceChildren(h('div',{class:'card introc'},
+    h('div',{class:'qlabel'},'Quiz'),h('h1',{},Q.title),
+    h('div',{class:'qhead'},h('span',{class:'chip'},'📝 '+qs.length+' questions'),Q.expires?h('span',{class:'chip'},'⏳ until '+new Date(Q.expires).toLocaleString()):''),
+    n,h('div',{style:'height:8px'}),g,err,
+    go,dashBtn));
+}
+
+// ---------- mistake correction ----------
+function sync(qi){if(att)fetch('/api/quiz/'+id+'/attempt/'+att,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fix:[qs[qi].i]})}).catch(()=>{})}
+function mcard(qi,upd,n,total){
+  const q=qs[qi];if(!fixed.has(qi))picks[qi]=[];else if(!picks[qi])picks[qi]=[];   // start clean: earlier clicked answers are cleared
+  const fb=h('div',{class:'fb',hidden:true,role:'status','aria-live':'polite'}),card=h('div',{class:'card mcard'});
+  const btns=q.options.map((t,i)=>h('button',{class:'opt',onclick:()=>tryIt(i)},h('span',{class:'ot'},t)));
+  function paint(){
+    btns.forEach((b,i)=>{
+      const was=picks[qi].includes(i)&&i!==q.answer,isFixed=fixed.has(qi);
+      b.classList.toggle('bad',was);b.classList.toggle('ok',isFixed&&i===q.answer);
+      b.disabled=isFixed||was;
+      const tag=b.querySelector('.you');
+      if(was&&!tag)b.append(h('span',{class:'you'},'Tried'));
+    });
+    card.classList.toggle('fixedc',fixed.has(qi));
+  }
+  function tryIt(i){
+    if(fixed.has(qi))return;
+    if(i===q.answer){beep('ok');fixed.add(qi);sync(qi);fb.className='fb good';fb.textContent='✅ Corrected — that’s the right answer!'}
+    else{beep('bad');if(!picks[qi].includes(i))picks[qi].push(i);fb.className='fb miss';fb.textContent='Not that one — try another option.'}
+    fb.hidden=false;paint();save();upd&&upd();
+  }
+  card.append(h('div',{class:'qlabel'},'Wrong answer '+n+' of '+total+' · Q'+(q.i+1)+(skipped.has(qi)?' · not answered':'')),h('h2',{class:'qtext'},q.q),h('div',{class:'opts'},btns),fb);
+  if(fixed.has(qi)){fb.className='fb good';fb.textContent='✅ Corrected — that’s the right answer!';fb.hidden=false}
+  paint();return card;
+}
+function openMist(onClose){
+  if(panelOpen||!wrong.length)return;panelOpen=true;
+  const list=[...wrong];let idx=Math.max(0,list.findIndex(i=>!fixed.has(i)));
+  const cnt=()=>list.filter(i=>fixed.has(i)).length;
+  const prog=h('span',{class:'chip good'}),ban=h('div',{class:'fb good',hidden:true},'🎉 All wrong answers corrected — nice work!'),holder=h('div');
+  const nav=h('div',{class:'wnav'},list.map((_,k)=>h('button',{class:'wn',onclick:()=>go(k)},String(k+1))));
+  const prev=h('button',{class:'g',onclick:()=>go(idx-1)},'← Previous'),next=h('button',{onclick:()=>go(idx+1)},'Next →');
+  const body=h('div',{class:'wbody'},h('div',{class:'wtin col'},ban,holder));
+  let closed=false;
+  const key=e=>{if(e.key==='Escape')close();else if(e.key==='ArrowRight')go(idx+1);else if(e.key==='ArrowLeft')go(idx-1)};
+  const close=()=>{if(closed)return;closed=true;panelOpen=false;closeSheet=null;document.removeEventListener('keydown',key);view.remove();document.body.style.overflow='';onClose&&onClose()};
+  closeSheet=close;
+  function upd(){
+    prog.textContent='✅ '+cnt()+' / '+list.length;ban.hidden=cnt()!==list.length;
+    [...nav.children].forEach((b,k)=>{b.className='wn'+(fixed.has(list[k])?' fx':'')+(k===idx?' cur':'')});
+    prev.disabled=idx===0;next.disabled=idx===list.length-1;
+    next.className=fixed.has(list[idx])&&idx<list.length-1?'':'g';
+  }
+  function go(k){if(k<0||k>=list.length)return;idx=k;render()}
+  function render(){holder.replaceChildren(mcard(list[idx],upd,idx+1,list.length));upd();body.scrollTop=0}
+  const view=h('div',{class:'wview'},
+    h('div',{class:'wtop'},h('div',{class:'wtin'},h('button',{class:'g wback',onclick:close},'← Back'),h('b',{class:'wtitle grow'},'Wrong answers'),prog,sndBtn()),nav),
+    body,h('div',{class:'wdock'},h('div',{class:'wtin'},prev,next)));
+  document.body.append(view);document.body.style.overflow='hidden';document.addEventListener('keydown',key);render();
+}
+
+// ---------- switch mode from the question page ----------
+function switchMode(m){
+  const cur=tm?'test':'all';if(m===cur)return;
+  if((ok+wrong.length>0||pos>0)&&!confirm((m==='test'?'Start the timed test ('+Math.min(N,qs.length)+' random questions, '+MINS+' min)?':'Switch to all questions (no timer)?')+'\nYour current progress will be reset.'))return;
+  document.onkeydown=null;hist=[];round=1;first=null;picks={};fixed=new Set();att=null;
+  fetch('/api/quiz/'+id+'/attempt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(student)}).then(r=>r.json()).then(r=>{att=r.id}).catch(()=>{});
+  if(m==='test'){sh=true;testRound=true;startTimer();run(shuf(qs.map((_,i)=>i)).slice(0,Math.min(N,qs.length)))}
+  else{stopTimer();testRound=false;sh=!!Q.shuffle;run(qs.map((_,i)=>i))}
+}
+
+// ---------- timer ----------
+function startTimer(){stopTimer();deadline=Date.now()+MINS*60000;tm=setInterval(tick,250)}
+function stopTimer(){clearInterval(tm);tm=null}
+function tick(){
+  const s=Math.ceil((deadline-Date.now())/1000);
+  document.querySelectorAll('.timer').forEach(e=>{e.textContent='⏱ '+fmt(s);e.classList.toggle('low',s<=300);e.classList.toggle('crit',s<=60)});
+  if(s<=0&&tm)timeout();
+}
+function timeout(){
+  stopTimer();if(closeSheet)closeSheet();timeUp=true;
+  order.slice(answered?pos+1:pos).forEach(qi=>{wrong.push(qi);skipped.add(qi);picks[qi]=[];fixed.delete(qi)});
+  pos=order.length;done();
+}
+
+// ---------- quiz ----------
+function run(idx){fin=null;order=sh?shuf(idx):idx;pos=0;wrong=[];ok=0;skipped=new Set();timeUp=false;show()}
+function show(){
+  if(pos>=order.length)return done();
+  answered=false;save();const qi=order[pos],q=qs[qi];let o=q.options.map((t,i)=>({t,i}));if(sh)o=shuf(o);
+  const last=pos+1>=order.length;
+  const fb=h('div',{class:'fb',hidden:true,role:'status','aria-live':'polite'});
+  const nx=h('button',{class:'next',onclick:()=>{pos++;show()}},last?'Finish ✓':'Next question →');
+  const bar=h('div',{class:'dock',hidden:true},nx);
+  const pick=k=>{if(answered)return;const x=o[k];answered=true;
+    btns.forEach((b,j)=>{b.disabled=true;if(o[j].i===q.answer)b.classList.add('ok')});
+    if(x.i===q.answer){ok++;beep('ok');fb.className='fb good';fb.textContent='🎉 Correct!'}
+    else{beep('bad');btns[k].classList.add('bad');wrong.push(qi);picks[qi]=[x.i];fixed.delete(qi);
+      const ci=o.findIndex(y=>y.i===q.answer);
+      fb.className='fb miss';fb.replaceChildren(h('div',{},'Not quite'),
+        h('div',{class:'fbl'},h('b',{},'Your answer: '),L(k)+'. '+x.t),
+        h('div',{class:'fbl okl'},h('b',{},'Correct answer: '),L(ci)+'. '+q.options[q.answer]));
+      refresh()}
+    save();fb.hidden=false;bar.hidden=false;fb.scrollIntoView({behavior:'smooth',block:'nearest'});nx.focus()};
+  const btns=o.map((x,k)=>h('button',{class:'opt',onclick:()=>pick(k)},h('span',{class:'ot'},x.t)));
+  const chipG=h('span',{class:'chip good'}),chipM=h('button',{class:'chip miss chipbtn',title:'Review and fix your mistakes',onclick:()=>openMist(()=>{refresh();if(answered)nx.focus()})});
+  function refresh(){chipG.textContent='✔ '+ok;const fx=wrong.filter(i=>fixed.has(i)).length;chipM.replaceChildren('✘ '+wrong.length,wrong.length?h('span',{class:'xs'},fx?' · '+fx+' fixed':' · Review'):'');chipM.disabled=!wrong.length}
+  refresh();
+  document.onkeydown=e=>{
+    if(panelOpen){if(e.key==='Escape'&&closeSheet)closeSheet();return}
+    if(e.metaKey||e.ctrlKey||e.altKey)return;
+    const i='abcdefgh'.indexOf(e.key.toLowerCase());
+    if(e.key.length===1&&i>=0&&i<btns.length&&!answered)pick(i);
+    else if((e.key==='Enter'||e.key==='ArrowRight')&&answered){e.preventDefault();nx.click()}};
+  const pct=Math.round(pos/order.length*100);
+  app.replaceChildren(
+   h('div',{class:'top'},
+    h('div',{class:'qhead'},h('span',{class:'chip'},(round>1?'Retry '+round+' · ':'')+'Q '+(pos+1)+' / '+order.length),chipG,chipM,h('span',{class:'grow'}),
+     tm?h('span',{class:'chip timer'},'⏱ '+fmt(MINS*60)):h('label',{class:'sw m'},h('input',{type:'checkbox',checked:sh,onchange:e=>{sh=e.target.checked;tog()}}),'🔀 Shuffle')),
+    h('div',{class:'segrow'},h('div',{class:'seg'},[['all','📚 All questions'],['test','⏱ Timed test · '+Math.min(N,qs.length)+' Q · '+MINS+' min']].map(([v,t])=>h('button',{class:'segb'+((tm?'test':'all')===v?' on':''),onclick:()=>switchMode(v)},t))),sndBtn()),
+    h('div',{class:'bar big'},h('i',{style:'width:'+pct+'%'}))),
+   h('div',{class:'card qcard'},h('div',{class:'qlabel'},'Question '+(pos+1)),h('h2',{class:'qtext'},q.q),h('div',{class:'opts'},btns),fb),
+   h('div',{class:'m hint'},'Tip: press A–'+L(btns.length-1)+' to answer, Enter for next'),bar);if(tm)tick();
+  function tog(){const f=answered?pos+1:pos,rest=order.slice(f);order=order.slice(0,f).concat(sh?shuf(rest):rest.sort((x,y)=>x-y));if(!answered)show()}
+}
+
+function done(rp){
+  document.onkeydown=null;panelOpen=false;stopTimer();
+  const wasTimed=rp?rp.wasTimed:testRound;testRound=false;if(rp)timeUp=!!rp.timeUp;
+  const used=rp?rp.used:wasTimed?(timeUp?MINS*60:Math.min(MINS*60,Math.round((Date.now()-(deadline-MINS*60000))/1000))):0;
+  if(!rp&&first===null)first=ok+'/'+order.length;
+  if(!rp)hist.push(ok+'/'+order.length);
+  if(att&&!rp)fetch('/api/quiz/'+id+'/attempt/'+att,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ok,total:order.length,wrong:wrong.map(i=>qs[i].i),done:!wrong.length,mode:wasTimed?'test':'all',secs:used})}).catch(()=>{});
+  fin={wasTimed,used,timeUp};save();if(!wrong.length)clearSave();
+  const pct=Math.round(ok/order.length*100);
+  const adj=h('p',{class:'adj'});
+  const title=wasTimed?(timeUp?'⏰ Time’s up!':(wrong.length?'Test complete':'🎉 Perfect score!')):(wrong.length?'Round '+round+' complete':'🎉 All correct!');
+  const timeLine=wasTimed?h('p',{class:'m'},'⏱ '+fmt(used)+' of '+fmt(MINS*60)+(skipped.size?' · '+skipped.size+' not answered':'')):'';
+  const c=h('div',{class:'card result'},h('div',{class:'ring',style:'--v:'+pct},h('b',{},pct+'%')),
+   h('h1',{},title),
+   h('p',{},ok+' of '+order.length+' correct'+(round>1?' · first attempt '+first:'')),timeLine,adj,
+   h('p',{class:'m'},student.name+' · '+student.group+' — rounds: '+hist.join(' → ')));
+  const act=h('div',{class:'row',style:'justify-content:center;margin-top:12px'});
+  if(wrong.length)act.append(h('button',{onclick:()=>{round++;run([...wrong])}},'🔁 Retry '+wrong.length+' missed question'+(wrong.length>1?'s':'')));
+  act.append(h('button',{class:'g',onclick:()=>{clearSave();intro()}},'Back to start'));c.append(act);
+  const out=[c];
+  if(wrong.length){
+    const fill=h('i',{}),sum=h('p',{class:'m',style:'margin:6px 0 12px'});
+    const upd=()=>{const f=wrong.filter(i=>fixed.has(i)).length;
+      adj.textContent=f?'✏️ With corrections: '+(ok+f)+' / '+order.length:'';
+      fill.style.width=(f/wrong.length*100)+'%';
+      sum.textContent=f===wrong.length?'🎉 All '+wrong.length+' corrected!':f+' of '+wrong.length+' corrected';
+      btn.textContent=f?'✏️ Continue correcting':'✏️ Review & correct wrong answers'};
+    const btn=h('button',{class:'next',onclick:()=>openMist(upd)});
+    out.push(h('div',{class:'card wsum'},h('h2',{style:'margin-top:0'},'❌ Wrong answers ('+wrong.length+')'),
+      h('p',{class:'m',style:'margin:0 0 10px'},'Opens in its own screen with your earlier answers cleared. Your score and results stay right here.'),
+      h('div',{class:'bar'},fill),sum,btn));
+    upd();
+  }
+  app.replaceChildren(...out);scrollTo(0,0);
+}
+</script></body></html>

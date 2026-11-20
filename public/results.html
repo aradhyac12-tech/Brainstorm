@@ -1,0 +1,41 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Brainstorm · Results</title><meta name="theme-color" content="#5b5bf0"><meta name="robots" content="noindex,nofollow"><meta name="description" content="Brainstorm results."><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"><link rel="stylesheet" href="/style.css">
+<style>table{border-collapse:collapse;width:100%;font-size:.92rem}th,td{padding:8px;border-bottom:1px solid var(--b);text-align:left;white-space:nowrap}th{color:var(--m);font-weight:600}tr.r{cursor:pointer}tr.r:hover{background:var(--bg)}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}.stats .card{margin:0;text-align:center}.stats b{font-size:1.6rem;display:block}.tag{padding:2px 8px;border-radius:9px;font-size:.8rem;background:var(--b)}.tag.ok{background:color-mix(in srgb,var(--ok) 25%,var(--c))}</style></head>
+<body><div class="wrap" style="max-width:980px" id="app">Loading…</div>
+<script>
+const app=document.getElementById('app'),id=new URLSearchParams(location.search).get('id'),PW=sessionStorage.pw||'';
+const h=(t,a={},...c)=>{const e=document.createElement(t);for(const[k,v]of Object.entries(a))k.startsWith('on')?e[k]=v:k==='class'?e.className=v:e[k]=v;c.flat().forEach(x=>e.append(x));return e};
+let Z,R=[],G='',open=new Set();
+Promise.all([fetch('/api/quiz/'+id,{headers:{'x-admin':PW}}).then(r=>r.json()),fetch('/api/quiz/'+id+'/results',{headers:{'x-admin':PW}}).then(r=>r.ok?r.json():Promise.reject())])
+ .then(([q,r])=>{Z=q;R=r;draw()}).catch(()=>app.textContent='Unauthorized - open this page from the Admin page (log in there first).');
+const pct=a=>a.rounds[0]?Math.round(a.rounds[0].ok/a.rounds[0].total*100):null;
+const avg=l=>{l=l.map(pct).filter(x=>x!==null);return l.length?Math.round(l.reduce((a,b)=>a+b,0)/l.length):'–'};
+const mins=a=>a.end?Math.max(1,Math.round((a.end-a.start)/6e4))+' min':'–';
+function csv(rows){
+  const e=v=>'"'+String(v).replace(/"/g,'""')+'"';
+  const t=[['Name','Group','First score','First %','Rounds','Completed','Started','Minutes']].concat(rows.map(a=>[a.name,a.group,a.rounds[0]?a.rounds[0].ok+'/'+a.rounds[0].total:'',pct(a)??'',a.rounds.length,a.done?'Yes':'No',new Date(a.start).toLocaleString(),a.end?Math.round((a.end-a.start)/6e4):''])).map(r=>r.map(e).join(',')).join('\n');
+  const l=h('a',{href:URL.createObjectURL(new Blob([t],{type:'text/csv'})),download:Z.title+'-results.csv'});l.click();
+}
+function draw(){
+  const groups=[...new Set(R.map(a=>a.group))].sort(),rows=R.filter(a=>!G||a.group===G).sort((a,b)=>b.start-a.start);
+  const miss={};rows.forEach(a=>a.rounds[0]&&a.rounds[0].wrong.forEach(w=>miss[w.q]=(miss[w.q]||0)+1));
+  const top=Object.entries(miss).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const sel=h('select',{onchange:e=>{G=e.target.value;draw()}},h('option',{value:''},'All groups'),groups.map(g=>h('option',{value:g,selected:g===G},g)));
+  const body=rows.flatMap(a=>{
+    const r=h('tr',{class:'r',onclick:()=>{open.has(a.id)?open.delete(a.id):open.add(a.id);draw()}},
+      h('td',{},a.name),h('td',{},a.group),h('td',{},a.rounds[0]?a.rounds[0].ok+'/'+a.rounds[0].total+' ('+pct(a)+'%)':'–'),h('td',{},String(a.rounds.length)),
+      h('td',{},h('span',{class:'tag'+(a.done?' ok':'')},a.done?'Completed':'In progress')),h('td',{},mins(a)),h('td',{},new Date(a.start).toLocaleString()));
+    if(!open.has(a.id))return[r];
+    const d=h('tr',{},h('td',{colspan:7,style:'white-space:normal;background:var(--bg)'},
+      a.rounds.map((x,i)=>h('div',{},h('b',{},'Round '+(i+1)+': '+x.ok+'/'+x.total+(x.mode==='test'?' ⏱ timed test, '+Math.floor((x.secs||0)/60)+'m '+String((x.secs||0)%60).padStart(2,'0')+'s':'')),x.wrong.length?' — missed: '+x.wrong.map(w=>'Q'+(w.i+1)).join(', '):' ✔ all correct')),
+      a.rounds[0]&&a.rounds[0].wrong.map(w=>h('div',{class:'m'},'Q'+(w.i+1)+'. '+w.q+((a.fixed||[]).includes(w.i)?'  ✅ corrected':''))),
+      h('button',{class:'d',style:'margin-top:8px',onclick:async e=>{e.stopPropagation();if(!confirm('Delete this attempt?'))return;await fetch('/api/quiz/'+id+'/results/'+a.id,{method:'DELETE',headers:{'x-admin':PW}});R=R.filter(x=>x.id!==a.id);draw()}},'Delete attempt')));
+    return[r,d];
+  });
+  const gs=groups.map(g=>{const l=R.filter(a=>a.group===g);return h('tr',{},h('td',{},g),h('td',{},String(l.length)),h('td',{},avg(l)+'%'),h('td',{},String(l.filter(a=>a.done).length)))});
+  app.replaceChildren(h('div',{class:'row'},h('h1',{class:'grow'},Z.title+' — Results'),sel,h('button',{class:'g',onclick:()=>csv(rows)},'Export CSV'),h('button',{class:'g',onclick:()=>location.reload()},'Refresh')),
+    h('div',{class:'stats'},h('div',{class:'card'},h('b',{},String(rows.length)),'Students'),h('div',{class:'card'},h('b',{},String(rows.filter(a=>a.done).length)),'Completed'),h('div',{class:'card'},h('b',{},avg(rows)+'%'),'Avg first-try score')),
+    h('div',{class:'card'},h('h2',{},'Students'),h('div',{style:'overflow-x:auto'},h('table',{},h('tr',{},['Name','Group','First try','Rounds','Status','Time','Started'].map(x=>h('th',{},x))),body)),rows.length?h('p',{class:'m'},'Tap a row for round-by-round details.'):h('p',{class:'m'},'No attempts yet. Share the link!')),
+    groups.length>1?h('div',{class:'card'},h('h2',{},'By group'),h('table',{},h('tr',{},['Group','Students','Avg first try','Completed'].map(x=>h('th',{},x))),gs)):'',
+    top.length?h('div',{class:'card'},h('h2',{},'Most-missed questions (first try)'),top.map(([q,c])=>h('div',{},h('b',{},c+'× '),q))):'');
+}
+</script></body></html>

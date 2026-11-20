@@ -1,0 +1,159 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Brainstorm · Admin</title><meta name="theme-color" content="#5b5bf0"><meta name="robots" content="noindex,nofollow"><meta name="description" content="Brainstorm admin."><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"><link rel="stylesheet" href="/style.css"></head>
+<body><div class="wrap"><div id="login" class="card" style="display:none"><h2>🧠 Admin login</h2><div class="pwbox"><input type="password" id="pw" placeholder="Admin password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"><button type="button" id="eye" class="eye" aria-label="Show password" title="Show password">👁</button></div><p id="le" class="warn"></p><button id="lb">Log in</button></div><div id="main"><h1>🧠 Brainstorm <span class="m">Admin</span></h1><p class="m" style="margin-top:-6px">Turn any PDF or DOCX into a quiz in seconds.</p>
+<div id="hb"></div><div class="card"><h2>Upload PDF / DOCX</h2><p class="m">Correct answers are auto-detected from: <b>highlight</b>, <b>bold</b> text, a <b>*</b> star mark, ✓, "(correct)", or an "Answer: B" line (works for PDF and DOCX).</p>
+<input type="file" id="f" accept=".pdf,.docx"><div class="row" style="margin-top:12px"><button id="up">Upload &amp; extract</button><span id="st" class="m grow"></span></div><div id="pw2" class="pwrap" hidden><div class="bar big"><i id="pbi"></i></div><div class="row m" style="justify-content:space-between"><span id="pl">Uploading…</span><b id="pp">0%</b></div></div></div>
+<div id="ed"></div><h2>Your quizzes</h2><div id="list"></div></div></div>
+<script>
+let PW='';try{PW=sessionStorage.pw||''}catch{}const savePw=v=>{try{sessionStorage.pw=v}catch{}};const $=s=>document.querySelector(s);
+const h=(t,a={},...c)=>{const e=document.createElement(t);for(const[k,v]of Object.entries(a))k.startsWith('on')?e[k]=v:k==='class'?e.className=v:e[k]=v;c.flat().forEach(x=>e.append(x));return e};
+async function api(u,o={}){
+  const hd={'x-admin':encodeURIComponent(PW)};if(typeof o.body==='string')hd['Content-Type']='application/json';
+  let r;try{r=await fetch(u,{...o,headers:hd})}catch{throw new Error('Cannot reach the server - check your connection')}
+  const j=await r.text().then(t=>{try{return JSON.parse(t)}catch{return {}}});
+  if(r.status===401){PW='';savePw('');showLogin('Wrong password - try again');throw new Error('Wrong password - try again')}
+  if(!r.ok)throw new Error(j.error||('Server error ('+r.status+')'));return j;
+}
+const link=id=>location.origin+'/q/'+id;
+/* ---------- UI helpers: toast, dialogs, clipboard ---------- */
+const toastBox=h('div',{class:'toasts'});document.body.append(toastBox);
+function toast(msg,kind='ok'){const t=h('div',{class:'toast '+kind},msg);toastBox.append(t);setTimeout(()=>t.classList.add('out'),2600);setTimeout(()=>t.remove(),3000)}
+function dialog({title,body,actions=[],onClose}){
+  return new Promise(res=>{
+    const prev=document.activeElement;
+    const close=v=>{document.removeEventListener('keydown',key);ov.classList.add('out');setTimeout(()=>{ov.remove();prev&&prev.focus&&prev.focus()},160);res(v)};
+    const key=e=>{if(e.key==='Escape')close(null)};
+    const btns=actions.map(a=>h('button',{class:a.class||'',onclick:async()=>{if(a.run){a.disabled=true;const r=await a.run();if(r===false)return}close(a.value)}},a.label));
+    const box=h('div',{class:'dlg',role:'dialog','aria-modal':'true'},
+      h('div',{class:'dhead'},h('h3',{},title),h('button',{class:'x',type:'button','aria-label':'Close',onclick:()=>close(null)},'✕')),
+      h('div',{class:'dbody'},body),h('div',{class:'dfoot'},btns));
+    const ov=h('div',{class:'ovl',onclick:e=>{if(e.target===ov)close(null)}},box);
+    document.body.append(ov);document.addEventListener('keydown',key);
+    (box.querySelector('[autofocus],input,.dfoot button:last-child')||box).focus();
+  });
+}
+const confirmBox=(title,msg,yes='Delete',danger=true)=>dialog({title,body:h('p',{},msg),actions:[{label:'Cancel',class:'g',value:false},{label:yes,class:danger?'d':'',value:true}]});
+async function copyText(t){
+  try{await navigator.clipboard.writeText(t);return true}catch{}
+  try{const a=h('textarea',{value:t,style:'position:fixed;opacity:0;left:-999px'});document.body.append(a);a.select();a.setSelectionRange(0,99999);const ok=document.execCommand('copy');a.remove();return ok}catch{return false}
+}
+async function copyLink(id,btn){
+  const ok=await copyText(link(id));
+  if(btn){const o=btn.dataset.l||(btn.dataset.l=btn.textContent);btn.textContent=ok?'Copied ✓':'Copy failed';btn.classList.toggle('done',ok);setTimeout(()=>{btn.textContent=o;btn.classList.remove('done')},1600)}
+  if(ok)toast('Link copied to clipboard');else shareDialog(id,'Copy this link manually');
+  return ok;
+}
+function shareDialog(id,title='Share this quiz'){
+  const inp=h('input',{type:'text',readOnly:true,value:link(id),onfocus:e=>e.target.select()});
+  const cp=h('button',{type:'button',onclick:()=>copyLink(id,cp)},'Copy');
+  return dialog({title,body:h('div',{},h('p',{class:'m'},'Students open this link to take the quiz.'),h('div',{class:'row nowrap'},inp,cp)),
+    actions:[{label:'Open quiz',class:'g',run:()=>{window.open(link(id),'_blank');return false}},{label:'Done',value:true}]});
+}
+let DIRTY=false;
+window.addEventListener('beforeunload',e=>{if(DIRTY){e.preventDefault();e.returnValue=''}});
+
+let QL=[];
+async function list(){try{const l=await api('/api/quizzes');QL=l;
+  if(!l.length){$('#list').replaceChildren(h('div',{class:'card m empty'},'No quizzes yet - upload a PDF or DOCX above.'));return}
+  $('#list').replaceChildren(...l.map(x=>{
+    const exp=x.expires?(x.expires<Date.now()?h('span',{class:'tag'},'⛔ Expired'):h('span',{class:'tag ok'},'⏰ '+new Date(x.expires).toLocaleString())):h('span',{class:'tag ok'},'No expiry');
+    const cp=h('button',{class:'g sm',type:'button',onclick:()=>copyLink(x.id,cp)},'Copy link');
+    return h('div',{class:'card qli'},
+      h('div',{class:'qtop'},h('div',{class:'grow'},h('b',{class:'qtitle'},x.title),h('div',{class:'m'},x.count+' questions')),exp),
+      h('div',{class:'linkchip'},h('code',{class:'grow'},link(x.id))),
+      h('div',{class:'row acts'},cp,
+        h('a',{class:'btn g sm',href:'/results.html?id='+x.id,target:'_blank'},'Results'),
+        h('button',{class:'g sm',type:'button',onclick:async e=>{if(DIRTY&&!await confirmBox('Discard unsaved changes?','You have unsaved changes in the quiz you are editing.','Discard'))return;const b=e.target;b.disabled=true;try{edit(await api('/api/quiz/'+x.id))}catch(er){toast(er.message,'bad')}b.disabled=false}},'Edit'),
+        h('span',{class:'grow'}),
+        h('button',{class:'d sm',type:'button','aria-label':'Delete quiz',onclick:async()=>{
+          if(await confirmBox('Delete quiz?','“'+x.title+'” and all student results will be permanently deleted.')){
+            try{await api('/api/quiz/'+x.id,{method:'DELETE'});toast('Quiz deleted');list()}catch(er){toast(er.message,'bad')}}}},'Delete')))}))}catch(e){$('#list').replaceChildren(h('div',{class:'card warn'},'⚠ Could not load quizzes: '+e.message,h('div',{class:'row',style:'margin-top:8px'},h('button',{class:'g sm',type:'button',onclick:()=>list()},'Retry'))))}}
+$('#up').onclick=async()=>{const f=$('#f').files[0];if(!f){$('#st').textContent='Choose a PDF or DOCX first';return}
+  const box=$('#pw2'),bar=$('#pbi'),lab=$('#pl'),pct=$('#pp'),btn=$('#up');
+  const set=(v,t)=>{bar.style.width=v+'%';pct.textContent=Math.round(v)+'%';if(t)lab.textContent=t};
+  const fail=msg=>{btn.disabled=false;lab.textContent='Failed';$('#st').textContent=msg};
+  box.hidden=false;btn.disabled=true;$('#st').textContent='';set(0,'Uploading '+f.name+'…');
+  // Files are sent in small parts (Vercel rejects any single request over ~4.5 MB) and the server reads them in time-boxed passes.
+  const post=async(url,body,type)=>{
+    let r,t='';
+    try{r=await fetch(url,{method:'POST',headers:{'x-admin':encodeURIComponent(PW),'Content-Type':type},body});t=await r.text()}
+    catch{throw new Error('Network error - check your connection')}
+    let j={};try{j=JSON.parse(t)}catch{}
+    if(r.status===401){showLogin('Wrong password');throw new Error('Wrong password')}
+    if(!r.ok){const e=new Error(j.error||(r.status===413?'File part too large for the server':r.status===504||r.status===502?'The server timed out (HTTP '+r.status+')':'Upload failed (HTTP '+r.status+')'));e.status=r.status;throw e}
+    return j};
+  const retry=async(fn,n=3)=>{for(let k=1;;k++){try{return await fn()}catch(e){if(k>=n||e.status===401||(e.status>=400&&e.status<500&&e.status!==429&&e.status!==408))throw e;await new Promise(r=>setTimeout(r,800*k))}}};
+  try{
+    const id=Array.from(crypto.getRandomValues(new Uint8Array(8)),b=>b.toString(16).padStart(2,'0')).join(''),CH=2.5e6,n=Math.max(1,Math.ceil(f.size/CH));
+    for(let i=0;i<n;i++){set(i/n*40,'Uploading '+(i+1)+' of '+n+'…');await retry(()=>post('/api/upload/chunk?id='+id+'&i='+i+'&n='+n,f.slice(i*CH,(i+1)*CH),'application/octet-stream'))}
+    set(40,'Reading pages & detecting answers…');
+    let j=null,v=40;
+    for(let pass=0;pass<60;pass++){
+      const tick=setInterval(()=>{v+=(93-v)*.02;set(v)},400);
+      try{j=await retry(()=>post('/api/upload/finish',JSON.stringify({id,n,name:f.name}),'application/json'),2)}finally{clearInterval(tick)}
+      if(!j.pending)break;
+      v=Math.max(v,40+54*j.done/(j.done+j.remaining));set(v,'Reading scanned text… ('+j.done+' of '+(j.done+j.remaining)+' pages done)');
+    }
+    if(!j||j.pending)throw new Error('Still processing - please try again');
+    set(100,'Done ✓');btn.disabled=false;setTimeout(()=>box.hidden=true,1200);
+    const nb=(j.questions||[]).filter(z=>z.answer<0).length;toast((j.questions||[]).length+' questions extracted'+(nb?' · '+nb+' need an answer':' · all answers detected'),nb?'warn':'ok');edit(j);list();
+  }catch(e){fail(e.message)}};
+
+function edit(q){
+  DIRTY=false;const dirty=()=>{DIRTY=true;const s=document.getElementById('sv');if(s&&!s.disabled){s.textContent='Save changes';s.classList.add('pulse')}const d=document.getElementById('dt');if(d)d.hidden=false};
+  const bad=q.questions.filter(x=>x.answer<0).length;
+  const open=el=>{if(el){el.open=true;el.scrollIntoView({behavior:'smooth',block:'center'})}};
+  const cards=q.questions.map((x,qi)=>{
+    const st=h('span',{class:'tag'+(x.answer>=0?' ok':'')},x.answer>=0?'✓ '+String.fromCharCode(65+x.answer)+(x.src==='bold'?' · bold':x.src==='mark'?' · marked':''):'⚠ pick answer');
+    const d=h('details',{class:'qc'+(x.answer<0?' need':'')},
+      h('summary',{},h('b',{class:'qn'},'Q'+(qi+1)),h('span',{class:'qt grow'},(x.q||'').slice(0,110)),st),
+      h('div',{class:'qb'},
+        h('div',{class:'row'},h('span',{class:'warn grow'},x.warn||''),h('button',{class:'g',onclick:()=>{q.questions.splice(qi,1);edit(q);dirty()}},'Delete question')),
+        h('textarea',{rows:3,value:x.q,oninput:e=>{x.q=e.target.value;dirty()}}),
+        x.options.map((o,oi)=>h('label',{class:'oprow'+(x.answer===oi?' sel':'')},
+          h('input',{type:'radio',name:'q'+qi,checked:x.answer===oi,onchange:()=>{x.answer=oi;x.warn='';dirty();
+            d.querySelectorAll('.oprow').forEach((r,k)=>r.classList.toggle('sel',k===oi));st.className='tag ok';st.textContent='✓ '+String.fromCharCode(65+oi);d.classList.remove('need');upd();
+            setTimeout(()=>{d.open=false;open(document.querySelector('details.qc.need'))},350)}}),
+          h('b',{},String.fromCharCode(65+oi)),h('input',{type:'text',class:'grow',value:o,oninput:e=>{x.options[oi]=e.target.value;dirty()}}),
+          h('button',{class:'g',onclick:e=>{e.preventDefault();x.options.splice(oi,1);x.answer=x.answer===oi?-1:x.answer>oi?x.answer-1:x.answer;edit(q);dirty()}},'✕')))));
+    return d});
+  const upd=()=>{const n=q.questions.filter(x=>x.answer>=0).length,t=q.questions.length||1;
+    const b=document.getElementById('rb');if(b){b.style.width=(n/t*100)+'%';document.getElementById('rt').textContent=n+' / '+q.questions.length+' answered'}};
+  const tools=h('div',{class:'row',style:'margin:10px 0'},h('button',{class:'g',onclick:()=>cards.forEach(c=>c.open=true)},'Expand all'),h('button',{class:'g',onclick:()=>cards.forEach(c=>c.open=false)},'Collapse all'),
+    h('button',{class:'g',onclick:()=>{cards.forEach(c=>c.hidden=false);cards.forEach(c=>{if(!c.classList.contains('need'))c.hidden=true})}},'Show only unanswered'),h('button',{class:'g',onclick:()=>cards.forEach(c=>c.hidden=false)},'Show all'));
+  $('#ed').replaceChildren(h('div',{class:'card'},h('h2',{},'Review & publish'),
+    h('p',{class:'m'},q.questions.length+' questions extracted'+(bad?' · '+bad+' need an answer selected (they are hidden from students until fixed)':'')+'. Select the radio for the correct option.'),
+    h('div',{class:'bar big',style:'margin:12px 0 4px'},h('i',{id:'rb'})),h('div',{class:'m',id:'rt',style:'margin-bottom:10px'}),
+    h('input',{type:'text',value:q.title,oninput:e=>{q.title=e.target.value;dirty()}}),
+    h('label',{class:'sw',style:'margin:10px 0'},h('input',{type:'checkbox',checked:q.shuffle,onchange:e=>{q.shuffle=e.target.checked;dirty()}}),'Shuffle ON by default (students can toggle). Off = original file order'),
+    h('div',{style:'margin:10px 0'},h('b',{},'Link expiry'),h('div',{class:'row',style:'margin-top:6px'},
+      h('input',{type:'datetime-local',value:q.expires?new Date(q.expires-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,16):'',onchange:e=>{q.expires=e.target.value?new Date(e.target.value).getTime():null;edit(q);dirty()}}),
+      [['+1 hour',36e5],['+1 day',864e5],['+7 days',6048e5]].map(([l,ms])=>h('button',{class:'g',onclick:()=>{q.expires=Date.now()+ms;edit(q);dirty()}},l)),
+      h('button',{class:'g',onclick:()=>{q.expires=null;edit(q);dirty()}},'Never')),
+      h('div',{class:(q.expires&&q.expires<Date.now())?'warn':'m'},q.expires?(q.expires<Date.now()?'⛔ Expired - students see an "expired" page. Set a later date to reopen.':'Link stops working '+new Date(q.expires).toLocaleString()+' (your local time)'):'Link never expires')),
+    h('div',{class:'savebar'},
+      h('button',{id:'sv',type:'button',onclick:async e=>{const b=e.currentTarget;b.disabled=true;b.textContent='Saving…';
+          try{await api('/api/quiz/'+q.id,{method:'PUT',body:JSON.stringify(q)});DIRTY=false;b.classList.remove('pulse');b.textContent='Saved ✓';const d=document.getElementById('dt');if(d)d.hidden=true;toast('Quiz saved');list();
+            setTimeout(()=>{b.disabled=false;b.textContent='Save'},1400);shareDialog(q.id,'Saved - share this quiz')}
+          catch(er){b.disabled=false;b.textContent='Save';toast(er.message,'bad')}}},'Save'),
+      h('button',{class:'g',type:'button',onclick:e=>copyLink(q.id,e.currentTarget)},'Copy share link'),
+      h('a',{href:link(q.id),target:'_blank',class:'btn g'},'Open'),
+      h('span',{id:'dt',class:'dirty',hidden:true},'● Unsaved changes'))),
+tools,...cards);upd();
+  scrollTo(0,$('#ed').offsetTop-10);
+}
+fetch('/api/health').then(r=>r.json()).then(j=>{if(j.temporary)$('#hb').replaceChildren(h('div',{class:'card warn'},'⚠️ Temporary storage: quizzes & results will be lost. Connect Supabase (see README).'))}).catch(()=>{});
+function showLogin(m){$('#main').style.display='none';$('#login').style.display='';$('#le').textContent=m||''}
+function showMain(){$('#login').style.display='none';$('#main').style.display='';list()}
+async function doLogin(){
+  const pw=$('#pw').value.trim(),b=$('#lb');
+  if(!pw){$('#le').textContent='Enter the admin password';$('#pw').focus();return}
+  b.disabled=true;b.textContent='Checking…';$('#le').textContent='';PW=pw;
+  try{await api('/api/auth');savePw(PW);showMain()}
+  catch(e){PW='';savePw('');$('#le').textContent=e.message||'Login failed'}
+  b.disabled=false;b.textContent='Log in';
+}
+$('#lb').onclick=doLogin;
+$('#eye').onclick=()=>{const i=$('#pw'),show=i.type==='password';i.type=show?'text':'password';$('#eye').textContent=show?'🙈':'👁';$('#eye').title=$('#eye').ariaLabel=show?'Hide password':'Show password';i.focus()};
+$('#pw').onkeydown=e=>{if(e.key==='Enter')$('#lb').click()};
+PW?showMain():showLogin();
+</script></body></html>
